@@ -1,15 +1,22 @@
 {
-  "name": "hello-world",
+  "name": "skill-overtime-hours",
   "version": "1.0.0",
-  "description": "",
+  "description": "Skill for tracking overtime hours",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha ../../test/test.js --reporter list --test-all",
+    "test:launch": "mocha ../../test/test.js --reporter list --test-launch --test-debug",
+    "test:add": "mocha ../../test/test.js --reporter list --test-launch --test-add",
+    "test:debug": "mocha ../../test/test.js --reporter list --test-all --test-debug",
+    "test:md": "mocha ../../test/test.js --reporter markdown --test-all > ../../test/README.md"
   },
-  "author": "",
+  "author": "narsenico",
   "license": "ISC",
   "dependencies": {
     "ask-sdk-core": "^2.0.0",
-    "ask-sdk-model": "^1.0.0"
+    "ask-sdk-model": "^1.0.0",
+    "i18next": "^12.1.0",
+    "i18next-sprintf-postprocessor": "^0.2.2",
+    "moment-timezone": "^0.5.23"
   }
 }

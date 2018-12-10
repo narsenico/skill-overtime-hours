@@ -3,14 +3,20 @@
     "publishingInformation": {
       "locales": {
         "en-US": {
-          "summary": "Sample Short Description",
+          "summary": "Skill for tracking overtime hours",
           "examplePhrases": [
             "Alexa open hello world",
             "hello",
             "help"
           ],
           "name": "skill-overtime-hours",
-          "description": "Sample Full Description"
+          "description": "** Full Description **"
+        },
+        "it-IT": {
+          "summary": "Skill per la gestione delle ore di straordinario",
+          "examplePhrases": [],
+          "name": "skill-overtime-hours",
+          "description": "** Descrizione completa **"
         }
       },
       "isAvailableWorldwide": true,
@@ -23,9 +29,32 @@
         "endpoint": {
           "sourceDir": "lambda/custom",
           "uri": "ask-custom-skill-overtime-hours-default"
+        },
+        "regions": {
+          "EU": {
+            "endpoint": {
+              "sourceDir": "lambda/custom",
+              "uri": "ask-custom-skill-overtime-hours-default"
+            }
+          }
         }
       }
     },
-    "manifestVersion": "1.0"
+    "permissions": [
+      {
+        "name": "alexa::household:lists:read"
+      },
+      {
+        "name": "alexa::household:lists:write"
+      }
+    ],
+    "manifestVersion": "1.0",
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "isExportCompliant": true,
+      "containsAds": false,
+      "isChildDirected": false,
+      "usesPersonalInfo": false
+    }
   }
 }

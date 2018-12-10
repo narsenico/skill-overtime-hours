@@ -1,0 +1,140 @@
+{
+    "interactionModel": {
+        "languageModel": {
+            "invocationName": "mio straordinario",
+            "intents": [
+                {
+                    "name": "AMAZON.CancelIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AMAZON.HelpIntent",
+                    "samples": [
+                        "aiuto",
+                        "aiutami"
+                    ]
+                },
+                {
+                    "name": "AMAZON.StopIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AddOvertimeIntent",
+                    "slots": [
+                        {
+                            "name": "duration",
+                            "type": "AMAZON.DURATION"
+                        },
+                        {
+                            "name": "preposition",
+                            "type": "TYPE_PREPOSITION"
+                        },
+                        {
+                            "name": "date",
+                            "type": "AMAZON.DATE"
+                        }
+                    ],
+                    "samples": [
+                        "aggiungi",
+                        "aggiungi ore",
+                        "aggiungi straordinario",
+                        "aggiungi {duration}",
+                        "aggiungi {duration} di straordinario",
+                        "aggiungi {duration} {preposition} {date}",
+                        "aggiungi straordinario {preposition} {date}",
+                        "aggiungere {duration}",
+                        "aggiungere {duration} di straordinario",
+                        "aggiungere {duration} {preposition} {date}"
+
+                    ]
+                },
+                {
+                    "name": "AMAZON.YesIntent",
+                    "samples": []
+                },
+                {
+                    "name": "AMAZON.NoIntent",
+                    "samples": []
+                }
+            ],
+            "types": [
+                {
+                    "name": "TYPE_PREPOSITION",
+                    "values": [
+                        {
+                            "name": {
+                                "value": "a",
+                                "synonyms": [
+                                    "a",
+                                    "al",
+                                    "per",
+                                    "per il"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        "dialog": {
+            "intents": [
+                {
+                    "name": "AddOvertimeIntent",
+                    "confirmationRequired": true,
+                    "prompts": {
+                        "confirmation": "Confirm.Intent.AddOvertimeIntent"
+                    },
+                    "slots": [
+                        {
+                            "name": "duration",
+                            "type": "AMAZON.DURATION",
+                            "confirmationRequired": false,
+                            "elicitationRequired": true,
+                            "prompts": {
+                                "elicitation": "Elicit.Slot.AddOvertimeIntent_Duration"
+                            }
+                        },
+                        {
+                            "name": "date",
+                            "type": "AMAZON.DATE",
+                            "confirmationRequired": false,
+                            "elicitationRequired": true,
+                            "prompts": {
+                                "elicitation": "Elicit.Slot.AddOvertimeIntent_Date"
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        "prompts": [
+            {
+                "id": "Elicit.Slot.AddOvertimeIntent_Date",
+                "variations": [
+                    {
+                        "type": "PlainText",
+                        "value": "Per quale giorno?"
+                    }
+                ]
+            },
+            {
+                "id": "Elicit.Slot.AddOvertimeIntent_Duration",
+                "variations": [
+                    {
+                        "type": "PlainText",
+                        "value": "Per quanto tempo?"
+                    }
+                ]
+            },
+            {
+                "id": "Confirm.Intent.AddOvertimeIntent",
+                "variations": [
+                    {
+                        "type": "PlainText",
+                        "value": "Aggiungo {duration} a {date}. Sei sicuro?"
+                    }
+                ]
+            }
+        ]
+    }
+}
