@@ -22,6 +22,7 @@ const { createSessionHelper,
 const DATE_FORMAT = 'YYYY-MM-DD',
     DATE_LONG_FORMAT = 'dddd, D MMMM',
     DAY_OF_WEEK = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
+    MONTHS_DIGIT = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
     // fuso orario italia
     // TODO: recuperare la timezone 
     //  https://developer.amazon.com/docs/smapi/alexa-settings-api-reference.html#request
@@ -30,12 +31,13 @@ const DATE_FORMAT = 'YYYY-MM-DD',
 
 const CONFIRM_NONE = 'NONE',
     CONFIRM_CONFIRMED = 'CONFIRMED',
-    CONFIRM_DENIED = 'DENIED';
+    CONFIRM_DENIED = 'DENIED',
+    ACTIVE = 'active',
+    COMPLETED = 'completed',
+    ARCHIVED = 'archived';
 
-const listStatuses = {
-    ACTIVE: 'active',
-    COMPLETED: 'completed',
-};
+const LIST_NAME = 'Straordinari';
+const PERMISSIONS = ['read::alexa:household:list', 'write::alexa:household:list'];
 
 /**
  * Il formato della durata è: PT<ore>H<minuti>M
@@ -47,6 +49,26 @@ function parseDurationString(duration) {
     const [, , h, , m] = /PT((\d+)H)?((\d+)M)?/.exec(duration) || [];
     log('parseDurationString', duration, h, m);
     return (+h || 0) * 60 + (+m || 0);
+}
+
+/**
+ * Analzza la stringa in input e ne ricava un elenco di mesi.
+ * 
+ * I formati riconosciuti sono:
+ * - YYYY-MM
+ * - YYYY
+ * 
+ * @param {String} sdate data da analizzare
+ * @returns {Array<String>} un array di mesi nel formato YYYY-MM oppure null se il formato non è valido
+ */
+function parseMonthString(sdate) {
+    if (/^\d{4}-\d{2}$/.test(sdate)) {
+        return [sdate];
+    } else if (/^\d{4}$/.test(sdate)) {
+        return MONTHS_DIGIT.map(m => `${sdate}-${m}`);
+    } else {
+        return null;
+    }
 }
 
 /**
@@ -111,49 +133,45 @@ function nextDay(dayOfWeek) {
     }
 }
 
+/**
+ * Recuper l'id della lista specificata.
+ * In caso di permessi mancanti l'errore viene intercettato da ErrorHandler.
+ * Una volta travato l'id viene salvato in sessione.
+ * Se la lista non esiste, oppure è archiviata, provo a crearla.
+ * 
+ * @param {Object} handlerInput 
+ * @param {Object} sessionHelper 
+ * @param {String} listName nome della lista
+ * @returns id lista, oppure null non in caso di problemi
+ */
 async function getListId(handlerInput, sessionHelper, listName) {
-    // TODO: cercare la lista custom per questa skill
-    log('getListId ...');
+    log(`getListId ${listName} ...`);
+    // cerco prima in sessione
     let listId = sessionHelper.get('todoListId');
-    // check session attributes to see if it has already been fetched
     if (!listId) {
-        // lookup the id for the 'to do' list
         const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
         const listOfLists = await listClient.getListsMetadata();
         if (!listOfLists) {
             log('permissions are not defined');
             return null;
         }
-        // for (let i = 0; i < listOfLists.lists.length; i += 1) {
-        //     log(`found ${listOfLists.lists[i].name} with id ${listOfLists.lists[i].listId}`);
-        //     const decodedListId = Buffer.from(listOfLists.lists[i].listId, 'base64').toString('utf8');
-        //     log(`decoded listId: ${decodedListId}`);
-        //     // The default lists (To-Do and Shopping List) list_id values are base-64 encoded strings with these formats:
-        //     //  <Internal_identifier>-TASK for the to-do list
-        //     //  <Internal_identifier>-SHOPPING_LIST for the shopping list
-        //     // Developers can base64 decode the list_id value and look for the specified string at the end. This string is constant and agnostic to localization.
-        //     if (decodedListId.endsWith(listName)) {
-        //         // since we're looking for the default to do list, it's always present and always active
-        //         listId = listOfLists.lists[i].listId;
-        //         break;
-        //     }
-        // }
+        // cerco la lista con il nome richieto e lo stato attivo
         const list = listOfLists.lists.find(list => {
-            return list.name === listName;
+            return list.name === listName &&
+                list.state === ACTIVE;
         });
         if (list) {
-            // TODO: verificare: se la lista è archiviata (ma non cancellata) va in errore l'aggiunta
-            //   immagino perché non posso aggiungere ad una lista archiviata
+            log('list retrieved:', JSON.stringify(list));
             listId = list.listId;
             sessionHelper.set('todoListId', listId);
         } else {
             // creo una nuova lista
             const listObject = {
                 name: listName,
-                state: 'active'
+                state: ACTIVE
             };
             const result = await listClient.createList(listObject);
-            log('created new list', result);
+            log('new list created', result);
             if (result) {
                 listId = result.listId;
                 sessionHelper.set('todoListId', listId);
@@ -164,13 +182,24 @@ async function getListId(handlerInput, sessionHelper, listName) {
     return listId;
 }
 
+/**
+ * Aggiunge gli straordinari per le date richieste alla lista specificata.
+ * Verrà creato un nuovo elemento per ogni data.
+ * 
+ * @param {Object} handlerInput 
+ * @param {String} listId id lista
+ * @param {Number} duration durata degli straordinari in minuti
+ * @param {Array<String>} dates elenco di date per cui aggiungere gli straordinari
+ * @returns numero totale di elementi nella lista
+ */
 async function addToList(handlerInput, listId, duration, dates) {
     const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
-    const list = await listClient.getList(listId, listStatuses.ACTIVE);
+    const list = await listClient.getList(listId, ACTIVE);
     if (!list) {
         return false;
     } else {
-        let len = list.items ? list.items.length : 0;
+        const len = list.items ? list.items.length : 0;
+        let prog = 0;
         let count = 0;
         log('addToList len:', len);
         // creo un item per ogni data
@@ -179,16 +208,15 @@ async function addToList(handlerInput, listId, duration, dates) {
                 // deve essere una stringa di massimo 256 caratteri
                 // TODO: trovare un formato che sia leggibile (la lista è consultabile da app)
                 //  ma di cui sia possibile il parsing
-                // value: JSON.stringify({ prog: ++len, duration, date: dates[idx] }),
-                value: `#${++len} ${dates[idx]}: ${duration} minuti`,
-                status: listStatuses.ACTIVE
+                value: `#${++prog + len} ${dates[idx]}: ${duration} minuti`,
+                status: ACTIVE
             };
             const result = await listClient.createListItem(listId, listItem);
             log('addToList', result);
             result && ++count;
         }
         log('addToList added', count);
-        return count;
+        return len + count;
     }
 }
 
@@ -199,7 +227,7 @@ const LaunchRequestHandler = {
     handle(handlerInput) {
         return handlerInput.responseBuilder
             .speak(ospeak.phrase('Benvenuto, con questa skill puoi gestire i tuoi straordinari.',
-                'Cosa desideri fare?'))
+                'Cosa vuoi fare?'))
             .reprompt('Per scoprire tutte le funzionalità di questa skill, prova a chiedere aiuto!')
             .getResponse();
     },
@@ -211,6 +239,8 @@ const LaunchRequestHandler = {
  * - {preposition} non utilizzata
  * - {date} data
  * - {dayOfWeek}  giorno della settimana
+ * 
+ * TODO: togliere dayOfWeek
  */
 const AddOvertimeIntent = {
     canHandle(handlerInput) {
@@ -219,23 +249,22 @@ const AddOvertimeIntent = {
     },
     async handle(handlerInput) {
         const responseBuilder = handlerInput.responseBuilder;
-        const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-        const slotValues = getSlotValues(filledSlots);
-        const dialogState = handlerInput.requestEnvelope.request.dialogState;
-        const confirmationStatus = handlerInput.requestEnvelope.request.intent.confirmationStatus;
         const attr = createSessionHelper(handlerInput);
 
         // prima di tutto recupero l'id della lista
-        // TODO: senza i permessi ricevo un errore "forbidden" e non riesco a intercettarlo
-        const listId = await getListId(handlerInput, attr, 'Straordinari');
+        // un eventuale problema con i permessi viene intercettato da ErrorHandler
+        // TODO: la creazione eventuale della lista impiega qualche secondo, provare a usare getDirectiveServiceClient
+        const listId = await getListId(handlerInput, attr, LIST_NAME);
         if (!listId) {
-            // l'utente non ha i permessi
-            const permissions = ['read::alexa:household:list', 'write::alexa:household:list'];
+            log('List id null!');
             responseBuilder
-                .speak('Mancano i permessi.')
-                .withAskForPermissionsConsentCard(permissions)
+                .speak('Non sono riuscito a recuperare la lista.')
                 .withShouldEndSession(true);
         } else {
+            const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
+            const slotValues = getSlotValues(filledSlots);
+            const dialogState = handlerInput.requestEnvelope.request.dialogState;
+            const confirmationStatus = handlerInput.requestEnvelope.request.intent.confirmationStatus;
 
             // data -> date YYYY-MM-DD
             // domani -> date YYYY-MM-DD
@@ -272,7 +301,14 @@ const AddOvertimeIntent = {
                             case CONFIRM_CONFIRMED:
                                 // aggiungo i dati alla lista
                                 const result = await addToList(handlerInput, listId, duration, dates);
-                                if (result) {
+                                if (result === dates.length) {
+                                    // se il numero di elementi aggiungi è uguale al numero di date
+                                    // significa che è la prima volta che uso la lista
+                                    responseBuilder
+                                        .speak(ospeak.phrase('Fatto!',
+                                            `Puoi consulatare la tua lista ${ospeak.emphasis(LIST_NAME)}, dall'app Amazon Alexa.`))
+                                        .withShouldEndSession(true);
+                                } else if (result) {
                                     responseBuilder
                                         .speak('Fatto!')
                                         .withShouldEndSession(true);
@@ -311,6 +347,88 @@ const AddOvertimeIntent = {
                 }
             } catch (err) {
                 log(`Error processing events request: ${err}`);
+                log(JSON.stringify(handlerInput));
+                responseBuilder
+                    .speak('Si è verificato un errore!');
+            }
+        }
+
+        return responseBuilder
+            .getResponse();
+    },
+};
+
+const GetOvertimeIntent = {
+    canHandle(handlerInput) {
+        return handlerInput.requestEnvelope.request.type === 'IntentRequest'
+            && handlerInput.requestEnvelope.request.intent.name === 'GetOvertimeIntent';
+    },
+    async handle(handlerInput) {
+        const responseBuilder = handlerInput.responseBuilder;
+        const attr = createSessionHelper(handlerInput);
+
+        // prima di tutto recupero l'id della lista
+        // un eventuale problema con i permessi viene intercettato da ErrorHandler
+        // TODO: è inutile creare la lista
+        const listId = await getListId(handlerInput, attr, LIST_NAME);
+        if (!listId) {
+            log('List id null!');
+            responseBuilder
+                .speak('Non sono riuscito a recuperare la lista.')
+                .withShouldEndSession(true);
+        } else {
+            const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
+            const slotValues = getSlotValues(filledSlots);
+            const dialogState = handlerInput.requestEnvelope.request.dialogState;
+
+            // data -> date YYYY-MM-DD
+            // domani -> date YYYY-MM-DD
+            // questa maggina -> date YYYY-MM-DD
+            // prossimo <giorno settimana> -> date YYYY-MM-DD
+            // dopo domani -> non riconosciuto
+            // primo <mese> -> date YYYY-MM-01
+            // questa settimana -> date YYYY-W<numero settimana>
+            // settimana prossima -> date YYYY-W<numero settimana>
+            // prossima settimana -> date YYYY-W<numero settimana>
+            // questo fine settimana -> date 2018-W<numero settimana>-WE
+            // giorno settimana -> dayOfWeek (lunedì, martedì, etc.)
+
+            // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
+
+            // cerco i parametri prima tra gli attributi di sessione
+            let dates = attr.get('dates');
+            let months = attr.get('months');
+
+            log('GetOvertimeIntent', dates, dialogState);
+
+            try {
+                // e cerco anche tra gli slot di richiesta
+                // se date è un mese lo salvo nell'attributo months
+                if (dates ||
+                    ((dates = (slotValues.date && slotValues.date.resolved))
+                        && (dates = parseDateString(dates)))) {
+                    attr.set('dates', dates);
+                    // TODO: recuperare elenco straordinari
+                    responseBuilder
+                        .speak(`Lista di ${dates.length} giorni`)
+                        .withShouldEndSession(true);
+                } else if (months ||
+                    ((months = (slotValues.date && slotValues.date.resolved))
+                        && (months = parseMonthString(months)))) {
+                    attr.set('months', months);
+                    // TODO: recuperare elenco straordinari
+                    responseBuilder
+                        .speak(`Lista di ${months.length} mesi`)
+                        .withShouldEndSession(true);
+                } else {
+                    responseBuilder
+                        .speak('Di quale giorno?')
+                        .addElicitSlotDirective('date')
+                        .withShouldEndSession(false);
+                }
+            } catch (err) {
+                log(`Error processing events request: ${err}`);
+                log(JSON.stringify(handlerInput));
                 responseBuilder
                     .speak('Si è verificato un errore!');
             }
@@ -367,12 +485,23 @@ const ErrorHandler = {
         return true;
     },
     handle(handlerInput, error) {
-        console.error(`Error handled: ${error.message}`);
+        console.error(`Error handled: ${JSON.stringify(error)}`);
 
-        return handlerInput.responseBuilder
-            .speak('Scusa, non ho capito.')
-            .reprompt('Scusa, non ho capito.')
-            .getResponse();
+        // gestisco forbidden per la mancanza di permessi
+        if (error.statusCode === 403 &&
+            error.response &&
+            error.response.Message == 'Request is not authorized.') {
+            return handlerInput.responseBuilder
+                .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
+                    'Grazie.'))
+                .withAskForPermissionsConsentCard(PERMISSIONS)
+                .getResponse();
+        } else {
+            return handlerInput.responseBuilder
+                .speak('Scusa, non ho capito.')
+                .reprompt('Scusa, non ho capito.')
+                .getResponse();
+        }
     },
 };
 
@@ -382,6 +511,7 @@ exports.handler = skillBuilder
     .addRequestHandlers(
         LaunchRequestHandler,
         AddOvertimeIntent,
+        GetOvertimeIntent,
         HelpIntentHandler,
         CancelAndStopIntentHandler,
         SessionEndedRequestHandler

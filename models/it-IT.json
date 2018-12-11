@@ -45,7 +45,27 @@
                         "aggiungere {duration}",
                         "aggiungere {duration} di straordinario",
                         "aggiungere {duration} {preposition} {date}"
-
+                    ]
+                },
+                {
+                    "name": "GetOvertimeIntent",
+                    "slots": [
+                        {
+                            "name": "preposition",
+                            "type": "TYPE_PREPOSITION"
+                        },
+                        {
+                            "name": "date",
+                            "type": "AMAZON.DATE"
+                        }
+                    ],
+                    "samples": [
+                        "elenca",
+                        "elenca gli straordinari {preposition} {date}",
+                        "elencare gli straordinari {preposition} {date}",
+                        "dammi gli straordinari {preposition} {date}",
+                        "dimmi gli straordinari {preposition} {date}",
+                        "gli straordinari {preposition} {date}"
                     ]
                 },
                 {
@@ -68,7 +88,9 @@
                                     "a",
                                     "al",
                                     "per",
-                                    "per il"
+                                    "per il",
+                                    "di",
+                                    "del"
                                 ]
                             }
                         }
@@ -104,6 +126,22 @@
                             }
                         }
                     ]
+                },
+                {
+                    "name": "GetOvertimeIntent",
+                    "confirmationRequired": false,
+                    "prompts": { },
+                    "slots": [
+                        {
+                            "name": "date",
+                            "type": "AMAZON.DATE",
+                            "confirmationRequired": false,
+                            "elicitationRequired": true,
+                            "prompts": {
+                                "elicitation": "Elicit.Slot.GetOvertimeIntent_Date"
+                            }
+                        }
+                    ]
                 }
             ]
         },
@@ -132,6 +170,15 @@
                     {
                         "type": "PlainText",
                         "value": "Aggiungo {duration} a {date}. Sei sicuro?"
+                    }
+                ]
+            },
+            {
+                "id": "Elicit.Slot.GetOvertimeIntent_Date",
+                "variations": [
+                    {
+                        "type": "PlainText",
+                        "value": "Per quale giorno?"
                     }
                 ]
             }
