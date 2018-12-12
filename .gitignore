@@ -1,6 +1,7 @@
 .DS_Store
 .ask
 /lambda/custom/node_modules
+/lambda/custom/config.json
 /test/node_modules
 test.txt
 todo

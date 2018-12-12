@@ -8,7 +8,9 @@
  */
 
 const Alexa = require('ask-sdk-core');
+const AWS = require('aws-sdk');
 const moment = require('moment-timezone');
+const skconfig = require('./config.json');
 const { createSessionHelper,
     getSlotValues,
     log,
@@ -37,7 +39,12 @@ const CONFIRM_NONE = 'NONE',
     ARCHIVED = 'archived';
 
 const LIST_NAME = 'Straordinari';
-const PERMISSIONS = ['read::alexa:household:list', 'write::alexa:household:list'];
+const PERMISSIONS = [
+    'read::alexa:household:list',
+    'write::alexa:household:list',
+    'alexa::profile:email:read'];
+
+AWS.config.update({ region: 'eu-west-1' });
 
 /**
  * Il formato della durata è: PT<ore>H<minuti>M
@@ -218,6 +225,44 @@ async function addToList(handlerInput, listId, duration, dates) {
         log('addToList added', count);
         return len + count;
     }
+}
+
+async function getUserEmail(handlerInput) {
+    const ups = handlerInput.serviceClientFactory.getUpsServiceClient();
+    return ups.getProfileEmail();
+}
+
+async function sendListByMail(from, to) {
+    const params = {
+        Destination: {
+            ToAddresses: [to]
+        },
+        Message: {
+            Body: {
+                Html: {
+                    Charset: "UTF-8",
+                    Data: "HTML_FORMAT_BODY"
+                },
+                Text: {
+                    Charset: "UTF-8",
+                    Data: "TEXT_FORMAT_BODY"
+                }
+            },
+            Subject: {
+                Charset: 'UTF-8',
+                Data: 'Test email'
+            }
+        },
+        Source: from,
+        ReplyToAddresses: [
+            from
+        ],
+    };
+
+    log(`try sending mail: ${JSON.stringify(params)}`);
+    return new AWS.SES({ apiVersion: '2010-12-01' })
+        .sendEmail(params)
+        .promise();
 }
 
 const LaunchRequestHandler = {
@@ -439,6 +484,54 @@ const GetOvertimeIntent = {
     },
 };
 
+const SendOvertimeIntent = {
+    canHandle(handlerInput) {
+        return handlerInput.requestEnvelope.request.type === 'IntentRequest'
+            && handlerInput.requestEnvelope.request.intent.name === 'SendOvertimeIntent';
+    },
+    async handle(handlerInput) {
+        const responseBuilder = handlerInput.responseBuilder;
+        const attr = createSessionHelper(handlerInput);
+
+        try {
+            const email = await getUserEmail(handlerInput);
+            if (email) {
+                log(`Sending mail to ${email}`);
+                // TODO: recuperare il contenuto della lista, formattarlo,
+                //  e inviarlo via mail sia nel testo che come allegato CSV
+                //  gli allegati possono essere inviati solo con sendRawEmail
+                //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
+                
+                // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
+                //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
+                //  oppure si può provre con il metodo SES VerifyEmailIdentity 
+                //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
+                //  il problema è che il template vuole due url per il redirect
+                //  in caso di autorizzaione o rifiuto
+                //  e a cosa faccio puntare questi url? io non ho un sito web!!!
+
+                // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
+                const response = await sendListByMail(skconfig['mail_recipe'], email);
+                log(`response: ${JSON.stringify(response)}`);
+                responseBuilder
+                    .speak('Controlla nella tua casella mail.')
+                    .withShouldEndSession(true)
+            } else {
+                responseBuilder
+                    .speak('Non ci sono riuscito!')
+                    .withShouldEndSession(true);
+            }
+        } catch (err) {
+            log(`Error processing events request: ${err}`);
+            log(JSON.stringify(handlerInput));
+            responseBuilder
+                .speak('Si è verificato un errore!');
+        }
+        return responseBuilder
+            .getResponse();
+    }
+};
+
 const HelpIntentHandler = {
     canHandle(handlerInput) {
         return handlerInput.requestEnvelope.request.type === 'IntentRequest'
@@ -488,9 +581,7 @@ const ErrorHandler = {
         console.error(`Error handled: ${JSON.stringify(error)}`);
 
         // gestisco forbidden per la mancanza di permessi
-        if (error.statusCode === 403 &&
-            error.response &&
-            error.response.Message == 'Request is not authorized.') {
+        if (error.statusCode === 403) {
             return handlerInput.responseBuilder
                 .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
                     'Grazie.'))
@@ -512,6 +603,7 @@ exports.handler = skillBuilder
         LaunchRequestHandler,
         AddOvertimeIntent,
         GetOvertimeIntent,
+        SendOvertimeIntent,
         HelpIntentHandler,
         CancelAndStopIntentHandler,
         SessionEndedRequestHandler

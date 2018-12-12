@@ -69,6 +69,18 @@
                     ]
                 },
                 {
+                    "name": "SendOvertimeIntent",
+                    "slots": [ ],
+                    "samples": [
+                        "invia",
+                        "invia lista",
+                        "inviami la lista",
+                        "inviarmi la lista",
+                        "mandami la lista",
+                        "mandarmi la lista"
+                    ]
+                },
+                {
                     "name": "AMAZON.YesIntent",
                     "samples": []
                 },
