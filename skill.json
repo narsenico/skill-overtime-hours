@@ -9,13 +9,13 @@
             "hello",
             "help"
           ],
-          "name": "Overtime hours",
+          "name": "My overtime hours",
           "description": "** Full Description **"
         },
         "it-IT": {
           "summary": "Skill per la gestione delle ore di straordinario",
           "examplePhrases": [],
-          "name": "Gestione straordinari",
+          "name": "I miei straordinari",
           "description": "** Descrizione completa **"
         }
       },

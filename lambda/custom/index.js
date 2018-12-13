@@ -22,7 +22,9 @@ const { createSessionHelper,
     ;
 
 const DATE_FORMAT = 'YYYY-MM-DD',
+    MONTH_FORMAT = 'YYYY-MM',
     DATE_LONG_FORMAT = 'dddd, D MMMM',
+    MONTH_LONG_FORMAT = 'MMMM',
     DAY_OF_WEEK = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
     MONTHS_DIGIT = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
     // fuso orario italia
@@ -158,10 +160,11 @@ async function getListId(handlerInput, sessionHelper, listName) {
     if (!listId) {
         const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
         const listOfLists = await listClient.getListsMetadata();
-        if (!listOfLists) {
-            log('permissions are not defined');
-            return null;
-        }
+        // tanto va in errore se non ho i permessi
+        // if (!listOfLists) {
+        //     log('permissions are not defined');
+        //     return null;
+        // }
         // cerco la lista con il nome richieto e lo stato attivo
         const list = listOfLists.lists.find(list => {
             return list.name === listName &&
@@ -171,21 +174,47 @@ async function getListId(handlerInput, sessionHelper, listName) {
             log('list retrieved:', JSON.stringify(list));
             listId = list.listId;
             sessionHelper.set('todoListId', listId);
-        } else {
-            // creo una nuova lista
-            const listObject = {
-                name: listName,
-                state: ACTIVE
-            };
-            const result = await listClient.createList(listObject);
-            log('new list created', result);
-            if (result) {
-                listId = result.listId;
-                sessionHelper.set('todoListId', listId);
-            }
         }
+        // else {
+        //     // creo una nuova lista
+        //     const listObject = {
+        //         name: listName,
+        //         state: ACTIVE
+        //     };
+        //     const result = await listClient.createList(listObject);
+        //     log('new list created', result);
+        //     if (result) {
+        //         listId = result.listId;
+        //         sessionHelper.set('todoListId', listId);
+        //     }
+        // }
     }
     log('... todoListId', listId);
+    return listId;
+}
+
+/**
+ * Crea una nuova lista con il nome specificato.
+ * 
+ * @param {Object} handlerInput
+ * @param {Object} sessionHelper
+ * @param {String} listName nome della lista
+ * @returns id lista, oppure null non in caso di problemi
+ */
+async function createList(handlerInput, sessionHelper, listName) {
+    log(`createList ${listName} ...`);
+    const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    const listObject = {
+        name: listName,
+        state: ACTIVE
+    };
+    const result = await listClient.createList(listObject);
+    log('new list created', result);
+    let listId;
+    if (result) {
+        listId = result.listId;
+        sessionHelper.set('todoListId', listId);
+    }
     return listId;
 }
 
@@ -224,6 +253,64 @@ async function addToList(handlerInput, listId, duration, dates) {
         }
         log('addToList added', count);
         return len + count;
+    }
+}
+
+/**
+ * Estrae il totale dei minuti raggruppati per i giorni indicati.
+ * 
+ * @param {Object} handlerInput 
+ * @param {String} listId 
+ * @param {Array<String>} dates elenco dei giorni nel formato YYYY-MM-DD
+ * @return una lista che come chiave a il giorno e come valore il totale dei minuti,
+ * oppure null se la lista non viene trovata
+ */
+async function getOvertimeByDays(handlerInput, listId, dates) {
+    const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    const list = await listClient.getList(listId, ACTIVE);
+    if (!list) {
+        return null;
+    } else if (!list.items || list.items.length === 0) {
+        return {};
+    } else {
+        return list.items.reduce((m, item) => {
+            if (item.status === ACTIVE) {
+                const [, date, duration] = /#\d+\s(\d{4}-\d{2}-\d{2}):\s(\d+)/.exec(item.value) || [];
+                if (date && duration && !!~dates.indexOf(date)) {
+                    m[date] = +duration + (m[date] || 0);
+                }
+            }
+            return m;
+        }, {});
+    }
+}
+
+/**
+ * Estrae il totale dei minuti raggruppati per i mesi indicati.
+ * 
+ * @param {Object} handlerInput 
+ * @param {String} listId 
+ * @param {Array<String>} months elenco dei mesi nel formato YYYY-MM
+ * @return una lista che come chiave a il mese e come valore il totale dei minuti,
+ * oppure null se la lista non viene trovata
+ */
+async function getOvertimeByMonths(handlerInput, listId, months) {
+    const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    const list = await listClient.getList(listId, ACTIVE);
+    if (!list) {
+        return null;
+    } else if (!list.items || list.items.length === 0) {
+        return {};
+    } else {
+        return list.items.reduce((m, item) => {
+            if (item.status === ACTIVE) {
+                const [, month, duration] = /#\d+\s(\d{4}-\d{2})-\d{2}:\s(\d+)/.exec(item.value) || [];
+                if (month && duration && !!~months.indexOf(month)) {
+                    m[month] = +duration + (m[month] || 0);
+                }
+            }
+            return m;
+        }, {});
     }
 }
 
@@ -283,9 +370,6 @@ const LaunchRequestHandler = {
  * - {hours}  durata straordinario
  * - {preposition} non utilizzata
  * - {date} data
- * - {dayOfWeek}  giorno della settimana
- * 
- * TODO: togliere dayOfWeek
  */
 const AddOvertimeIntent = {
     canHandle(handlerInput) {
@@ -299,9 +383,13 @@ const AddOvertimeIntent = {
         // prima di tutto recupero l'id della lista
         // un eventuale problema con i permessi viene intercettato da ErrorHandler
         // TODO: la creazione eventuale della lista impiega qualche secondo, provare a usare getDirectiveServiceClient
-        const listId = await getListId(handlerInput, attr, LIST_NAME);
+        let listId = await getListId(handlerInput, attr, LIST_NAME);
+        // se non la trovo provo a crearla
         if (!listId) {
-            log('List id null!');
+            listId = await createList(handlerInput, attr, LIST_NAME);
+        }
+        if (!listId) {
+            log('list id null!');
             responseBuilder
                 .speak('Non sono riuscito a recuperare la lista.')
                 .withShouldEndSession(true);
@@ -321,7 +409,6 @@ const AddOvertimeIntent = {
             // settimana prossima -> date YYYY-W<numero settimana>
             // prossima settimana -> date YYYY-W<numero settimana>
             // questo fine settimana -> date 2018-W<numero settimana>-WE
-            // giorno settimana -> dayOfWeek (lunedì, martedì, etc.)
 
             // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
 
@@ -339,8 +426,8 @@ const AddOvertimeIntent = {
                         (duration = parseDurationString(duration))))) {
                     attr.set('duration', duration);
                     if (dates ||
-                        (((dates = ((slotValues.date && slotValues.date.resolved) || (slotValues.dayOfWeek && slotValues.dayOfWeek.resolved)))
-                            && (dates = parseDateString(dates))))) {
+                        ((dates = (slotValues.date && slotValues.date.resolved))
+                            && (dates = parseDateString(dates)))) {
                         attr.set('dates', dates);
                         switch (confirmationStatus) {
                             case CONFIRM_CONFIRMED:
@@ -414,12 +501,11 @@ const GetOvertimeIntent = {
 
         // prima di tutto recupero l'id della lista
         // un eventuale problema con i permessi viene intercettato da ErrorHandler
-        // TODO: è inutile creare la lista
         const listId = await getListId(handlerInput, attr, LIST_NAME);
         if (!listId) {
-            log('List id null!');
+            log('list id null!');
             responseBuilder
-                .speak('Non sono riuscito a recuperare la lista.')
+                .speak('La tua lista straodrinari è vuota.')
                 .withShouldEndSession(true);
         } else {
             const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
@@ -436,7 +522,6 @@ const GetOvertimeIntent = {
             // settimana prossima -> date YYYY-W<numero settimana>
             // prossima settimana -> date YYYY-W<numero settimana>
             // questo fine settimana -> date 2018-W<numero settimana>-WE
-            // giorno settimana -> dayOfWeek (lunedì, martedì, etc.)
 
             // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
 
@@ -453,21 +538,61 @@ const GetOvertimeIntent = {
                     ((dates = (slotValues.date && slotValues.date.resolved))
                         && (dates = parseDateString(dates)))) {
                     attr.set('dates', dates);
-                    // TODO: recuperare elenco straordinari
-                    responseBuilder
-                        .speak(`Lista di ${dates.length} giorni`)
-                        .withShouldEndSession(true);
+                    // recupero elenco straordinari per i giorni indicati
+                    const data = await getOvertimeByDays(handlerInput, listId, dates);
+                    log(`getOvertimeByDays: ${JSON.stringify(data)}`);
+                    if (!data) {
+                        responseBuilder
+                            .speak('Non sono riuscito a recuperare la lista.')
+                            .withShouldEndSession(true);
+                    } else {
+                        const keys = Object.keys(data);
+                        if (keys.length === 0) {
+                            // TODO: ripetere il periodo (attenzione a giorni, settimana, etc.)
+                            responseBuilder
+                                .speak('Per il periodo indicato non hai fatto straordinari.')
+                                .withShouldEndSession(true);
+                        } else {
+                            responseBuilder
+                                .speak(ospeak.phrase(...keys.map(date => {
+                                    return `${moment(date, DATE_FORMAT).locale('it').format(DATE_LONG_FORMAT)}
+                                    hai fatto ${ospeak.formatMinutes(data[date])} di straordinari.`
+                                }))
+                                )
+                                .withShouldEndSession(true);
+                        }
+                    }                    
                 } else if (months ||
                     ((months = (slotValues.date && slotValues.date.resolved))
                         && (months = parseMonthString(months)))) {
                     attr.set('months', months);
-                    // TODO: recuperare elenco straordinari
-                    responseBuilder
-                        .speak(`Lista di ${months.length} mesi`)
-                        .withShouldEndSession(true);
+                    // recupero elenco straordinari per i mesi indicati
+                    const data = await getOvertimeByMonths(handlerInput, listId, months);
+                    log(`getOvertimeByMonths: ${JSON.stringify(data)}`);
+                    if (!data) {
+                        responseBuilder
+                            .speak('Non sono riuscito a recuperare la lista.')
+                            .withShouldEndSession(true);
+                    } else {
+                        const keys = Object.keys(data);
+                        if (keys.length === 0) {
+                            // TODO: ripetere il periodo (attenzione a mese, anno)
+                            responseBuilder
+                                .speak('Per il periodo indicato non hai fatto straordinari.')
+                                .withShouldEndSession(true);
+                        } else {
+                            responseBuilder
+                                .speak(ospeak.phrase(...keys.map(month => {
+                                    return `A ${moment(month, MONTH_FORMAT).locale('it').format(MONTH_LONG_FORMAT)}
+                                    hai fatto ${ospeak.formatMinutes(data[month])} di straordinari.`
+                                }))
+                                )
+                                .withShouldEndSession(true);
+                        }
+                    }
                 } else {
                     responseBuilder
-                        .speak('Di quale giorno?')
+                        .speak('Di quando?')
                         .addElicitSlotDirective('date')
                         .withShouldEndSession(false);
                 }
@@ -501,7 +626,7 @@ const SendOvertimeIntent = {
                 //  e inviarlo via mail sia nel testo che come allegato CSV
                 //  gli allegati possono essere inviati solo con sendRawEmail
                 //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
-                
+
                 // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
                 //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
                 //  oppure si può provre con il metodo SES VerifyEmailIdentity 
@@ -510,8 +635,12 @@ const SendOvertimeIntent = {
                 //  in caso di autorizzaione o rifiuto
                 //  e a cosa faccio puntare questi url? io non ho un sito web!!!
 
+                // forms google da usare come link di risposta
+                //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
+
                 // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
                 const response = await sendListByMail(skconfig['mail_recipe'], email);
+                // TODO: cosa succede se la mail non è autorizzata?
                 log(`response: ${JSON.stringify(response)}`);
                 responseBuilder
                     .speak('Controlla nella tua casella mail.')

@@ -1,7 +1,7 @@
 {
     "interactionModel": {
         "languageModel": {
-            "invocationName": "mio straordinario",
+            "invocationName": "miei straordinari",
             "intents": [
                 {
                     "name": "AMAZON.CancelIntent",
@@ -61,6 +61,8 @@
                     ],
                     "samples": [
                         "elenca",
+                        "elenca gli straordinari",
+                        "elencare gli straordinari",
                         "elenca gli straordinari {preposition} {date}",
                         "elencare gli straordinari {preposition} {date}",
                         "dammi gli straordinari {preposition} {date}",
