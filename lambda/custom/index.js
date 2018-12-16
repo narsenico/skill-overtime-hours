@@ -16,7 +16,8 @@ const { createSessionHelper,
     log,
     TARGET_SPEAKER,
     // TARGET_CARD,
-    createComposer } = require('./utility.js'),
+    createComposer,
+    createRawMail } = require('./utility.js'),
     ospeak = createComposer(TARGET_SPEAKER)
     //, ocard = createComposer(TARGET_CARD)
     ;
@@ -24,6 +25,7 @@ const { createSessionHelper,
 const DATE_FORMAT = 'YYYY-MM-DD',
     MONTH_FORMAT = 'YYYY-MM',
     DATE_LONG_FORMAT = 'dddd, D MMMM',
+    DATE_MEDIUM_FORMAT = 'ddd, DD MMM',
     MONTH_LONG_FORMAT = 'MMMM',
     DAY_OF_WEEK = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
     MONTHS_DIGIT = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
@@ -160,11 +162,6 @@ async function getListId(handlerInput, sessionHelper, listName) {
     if (!listId) {
         const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
         const listOfLists = await listClient.getListsMetadata();
-        // tanto va in errore se non ho i permessi
-        // if (!listOfLists) {
-        //     log('permissions are not defined');
-        //     return null;
-        // }
         // cerco la lista con il nome richieto e lo stato attivo
         const list = listOfLists.lists.find(list => {
             return list.name === listName &&
@@ -175,19 +172,6 @@ async function getListId(handlerInput, sessionHelper, listName) {
             listId = list.listId;
             sessionHelper.set('todoListId', listId);
         }
-        // else {
-        //     // creo una nuova lista
-        //     const listObject = {
-        //         name: listName,
-        //         state: ACTIVE
-        //     };
-        //     const result = await listClient.createList(listObject);
-        //     log('new list created', result);
-        //     if (result) {
-        //         listId = result.listId;
-        //         sessionHelper.set('todoListId', listId);
-        //     }
-        // }
     }
     log('... todoListId', listId);
     return listId;
@@ -267,6 +251,7 @@ async function addToList(handlerInput, listId, duration, dates) {
  */
 async function getOvertimeByDays(handlerInput, listId, dates) {
     const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    // recupero tutti gli elementi attivi della lista
     const list = await listClient.getList(listId, ACTIVE);
     if (!list) {
         return null;
@@ -274,11 +259,9 @@ async function getOvertimeByDays(handlerInput, listId, dates) {
         return {};
     } else {
         return list.items.reduce((m, item) => {
-            if (item.status === ACTIVE) {
-                const [, date, duration] = /#\d+\s(\d{4}-\d{2}-\d{2}):\s(\d+)/.exec(item.value) || [];
-                if (date && duration && !!~dates.indexOf(date)) {
-                    m[date] = +duration + (m[date] || 0);
-                }
+            const [, date, duration] = /#\d+\s(\d{4}-\d{2}-\d{2}):\s(\d+)/.exec(item.value) || [];
+            if (date && duration && !!~dates.indexOf(date)) {
+                m[date] = +duration + (m[date] || 0);
             }
             return m;
         }, {});
@@ -296,6 +279,7 @@ async function getOvertimeByDays(handlerInput, listId, dates) {
  */
 async function getOvertimeByMonths(handlerInput, listId, months) {
     const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    // recupero tutti gli elementi attivi della lista
     const list = await listClient.getList(listId, ACTIVE);
     if (!list) {
         return null;
@@ -303,11 +287,9 @@ async function getOvertimeByMonths(handlerInput, listId, months) {
         return {};
     } else {
         return list.items.reduce((m, item) => {
-            if (item.status === ACTIVE) {
-                const [, month, duration] = /#\d+\s(\d{4}-\d{2})-\d{2}:\s(\d+)/.exec(item.value) || [];
-                if (month && duration && !!~months.indexOf(month)) {
-                    m[month] = +duration + (m[month] || 0);
-                }
+            const [, month, duration] = /#\d+\s(\d{4}-\d{2})-\d{2}:\s(\d+)/.exec(item.value) || [];
+            if (month && duration && !!~months.indexOf(month)) {
+                m[month] = +duration + (m[month] || 0);
             }
             return m;
         }, {});
@@ -319,37 +301,70 @@ async function getUserEmail(handlerInput) {
     return ups.getProfileEmail();
 }
 
-async function sendListByMail(from, to) {
-    const params = {
-        Destination: {
-            ToAddresses: [to]
-        },
-        Message: {
-            Body: {
-                Html: {
-                    Charset: "UTF-8",
-                    Data: "HTML_FORMAT_BODY"
-                },
-                Text: {
-                    Charset: "UTF-8",
-                    Data: "TEXT_FORMAT_BODY"
+async function sendListByMail(handlerInput, from, to, listId) {
+    const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
+    // recupero tutti gli elementi attivi della lista
+    const list = await listClient.getList(listId, ACTIVE);
+    if (!list) {
+        return null;
+    } else if (!list.items || list.items.length === 0) {
+        return null;
+    } else {
+        const items = list.items
+            .map(item => {
+                const [, index, date, duration] = /#(\d+)\s(\d{4}-\d{2}-\d{2}):\s(\d+)/.exec(item.value) || [];
+                if (date) {
+                    return {
+                        index,
+                        date,
+                        duration
+                    }
+                } else {
+                    return null;
                 }
-            },
-            Subject: {
-                Charset: 'UTF-8',
-                Data: 'Test email'
-            }
-        },
-        Source: from,
-        ReplyToAddresses: [
-            from
-        ],
-    };
+            })
+            .filter(item => item)
+            .sort((a, b) => a.date.localeCompare(b.date));
 
-    log(`try sending mail: ${JSON.stringify(params)}`);
-    return new AWS.SES({ apiVersion: '2010-12-01' })
-        .sendEmail(params)
-        .promise();
+        // log(`sendListByMail: ${JSON.stringify(items)}`);
+
+        if (items.length > 0) {
+            const text = items.reduce((m, item) => {
+                return m += `${moment(item.date).locale('it').format(DATE_MEDIUM_FORMAT)}: ${item.duration}\n`;
+            }, 'Questi sono tutti i tuoi straordinari (espressi in minuti):\n\n');
+            const html = items.reduce((m, item) => {
+                return m += `${moment(item.date).locale('it').format(DATE_MEDIUM_FORMAT)}: ${item.duration}<br>`;
+            }, 'Questi sono tutti i tuoi straordinari (espressi in minuti):<br><br>');
+            const csv = items.reduce((m, item) => {
+                return m += `"${item.date}","${item.duration}"\n`;
+            }, '');
+
+            const raw = await createRawMail({
+                from,
+                to,
+                subject: 'Straordinari',
+                text,
+                html,
+                attachments: [
+                    {
+                        filename: 'straordinari.csv',
+                        type: 'text/csv',
+                        content: csv
+                    }
+                ]
+            });
+
+            return new AWS.SES({ apiVersion: '2010-12-01' })
+                .sendRawEmail({
+                    RawMessage: {
+                        Data: raw
+                    }
+                })
+                .promise();
+        } else {
+            return null;
+        }
+    }
 }
 
 const LaunchRequestHandler = {
@@ -380,45 +395,53 @@ const AddOvertimeIntent = {
         const responseBuilder = handlerInput.responseBuilder;
         const attr = createSessionHelper(handlerInput);
 
-        // prima di tutto recupero l'id della lista
-        // un eventuale problema con i permessi viene intercettato da ErrorHandler
-        // TODO: la creazione eventuale della lista impiega qualche secondo, provare a usare getDirectiveServiceClient
-        let listId = await getListId(handlerInput, attr, LIST_NAME);
-        // se non la trovo provo a crearla
-        if (!listId) {
-            listId = await createList(handlerInput, attr, LIST_NAME);
-        }
-        if (!listId) {
-            log('list id null!');
-            responseBuilder
-                .speak('Non sono riuscito a recuperare la lista.')
-                .withShouldEndSession(true);
-        } else {
-            const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-            const slotValues = getSlotValues(filledSlots);
-            const dialogState = handlerInput.requestEnvelope.request.dialogState;
-            const confirmationStatus = handlerInput.requestEnvelope.request.intent.confirmationStatus;
+        try {
+            // prima di tutto recupero l'id della lista
+            // un eventuale problema con i permessi viene intercettato da ErrorHandler
+            // TODO: la creazione eventuale della lista impiega qualche secondo, provare a usare getDirectiveServiceClient
+            let listId = await getListId(handlerInput, attr, LIST_NAME);
+            // se non la trovo provo a crearla
+            if (!listId) {
+                listId = await createList(handlerInput, attr, LIST_NAME);
+            }
+            if (!listId) {
+                log('list id null!');
+                responseBuilder
+                    .speak('Non sono riuscito a recuperare la lista.')
+                    .withShouldEndSession(true);
+            } else {
+                const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
+                const slotValues = getSlotValues(filledSlots);
+                const dialogState = handlerInput.requestEnvelope.request.dialogState;
+                const confirmationStatus = handlerInput.requestEnvelope.request.intent.confirmationStatus;
 
-            // data -> date YYYY-MM-DD
-            // domani -> date YYYY-MM-DD
-            // questa maggina -> date YYYY-MM-DD
-            // prossimo <giorno settimana> -> date YYYY-MM-DD
-            // dopo domani -> non riconosciuto
-            // primo <mese> -> date YYYY-MM-01
-            // questa settimana -> date YYYY-W<numero settimana>
-            // settimana prossima -> date YYYY-W<numero settimana>
-            // prossima settimana -> date YYYY-W<numero settimana>
-            // questo fine settimana -> date 2018-W<numero settimana>-WE
+                // data -> date YYYY-MM-DD
+                // domani -> date YYYY-MM-DD
+                // questa maggina -> date YYYY-MM-DD
+                // prossimo <giorno settimana> -> date YYYY-MM-DD
+                // dopo domani -> non riconosciuto
+                // primo <mese> -> date YYYY-MM-01
+                // questa settimana -> date YYYY-W<numero settimana>
+                // settimana prossima -> date YYYY-W<numero settimana>
+                // prossima settimana -> date YYYY-W<numero settimana>
+                // questo fine settimana -> date 2018-W<numero settimana>-WE
 
-            // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
+                // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
 
-            // cerco i parametri prima tra gli attributi di sessione
-            let duration = attr.get('duration');
-            let dates = attr.get('dates');
+                // TODO: problemone, se pronuncio una data già passata, 
+                //  mi viene passata la data per l'anno successivo
+                //  soluzione? considero sempre la data come passata, e cambio l'anno di conseguenza?
+                // oggi 2018-12-15
+                // - 2019-11-05 => 2018-11-05
+                //  oggi 2019-01-05
+                // - 2019-12-30 => 2018-12-30
 
-            log('AddOvertimeIntent', duration, dates, dialogState, confirmationStatus);
+                // cerco i parametri prima tra gli attributi di sessione
+                let duration = attr.get('duration');
+                let dates = attr.get('dates');
 
-            try {
+                log('AddOvertimeIntent', duration, dates, dialogState, confirmationStatus);
+
                 // e cerco anche tra gli slot di richiesta
                 // se manca uno dei due lo chiedo all'utente
                 if (duration ||
@@ -477,12 +500,12 @@ const AddOvertimeIntent = {
                         .addElicitSlotDirective('duration')
                         .withShouldEndSession(false);
                 }
-            } catch (err) {
-                log(`Error processing events request: ${err}`);
-                log(JSON.stringify(handlerInput));
-                responseBuilder
-                    .speak('Si è verificato un errore!');
             }
+        } catch (err) {
+            log(`Error processing events request: ${err}`);
+            log(JSON.stringify(handlerInput));
+            responseBuilder
+                .speak('Si è verificato un errore!');
         }
 
         return responseBuilder
@@ -499,39 +522,39 @@ const GetOvertimeIntent = {
         const responseBuilder = handlerInput.responseBuilder;
         const attr = createSessionHelper(handlerInput);
 
-        // prima di tutto recupero l'id della lista
-        // un eventuale problema con i permessi viene intercettato da ErrorHandler
-        const listId = await getListId(handlerInput, attr, LIST_NAME);
-        if (!listId) {
-            log('list id null!');
-            responseBuilder
-                .speak('La tua lista straodrinari è vuota.')
-                .withShouldEndSession(true);
-        } else {
-            const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
-            const slotValues = getSlotValues(filledSlots);
-            const dialogState = handlerInput.requestEnvelope.request.dialogState;
+        try {
+            // prima di tutto recupero l'id della lista
+            // un eventuale problema con i permessi viene intercettato da ErrorHandler
+            const listId = await getListId(handlerInput, attr, LIST_NAME);
+            if (!listId) {
+                log('list id null!');
+                responseBuilder
+                    .speak('La tua lista straodrinari è vuota.')
+                    .withShouldEndSession(true);
+            } else {
+                const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
+                const slotValues = getSlotValues(filledSlots);
+                const dialogState = handlerInput.requestEnvelope.request.dialogState;
 
-            // data -> date YYYY-MM-DD
-            // domani -> date YYYY-MM-DD
-            // questa maggina -> date YYYY-MM-DD
-            // prossimo <giorno settimana> -> date YYYY-MM-DD
-            // dopo domani -> non riconosciuto
-            // primo <mese> -> date YYYY-MM-01
-            // questa settimana -> date YYYY-W<numero settimana>
-            // settimana prossima -> date YYYY-W<numero settimana>
-            // prossima settimana -> date YYYY-W<numero settimana>
-            // questo fine settimana -> date 2018-W<numero settimana>-WE
+                // data -> date YYYY-MM-DD
+                // domani -> date YYYY-MM-DD
+                // questa maggina -> date YYYY-MM-DD
+                // prossimo <giorno settimana> -> date YYYY-MM-DD
+                // dopo domani -> non riconosciuto
+                // primo <mese> -> date YYYY-MM-01
+                // questa settimana -> date YYYY-W<numero settimana>
+                // settimana prossima -> date YYYY-W<numero settimana>
+                // prossima settimana -> date YYYY-W<numero settimana>
+                // questo fine settimana -> date 2018-W<numero settimana>-WE
 
-            // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
+                // TODO: occorre gestire anche il passatto (ieri, giovedì scorso, etc)
 
-            // cerco i parametri prima tra gli attributi di sessione
-            let dates = attr.get('dates');
-            let months = attr.get('months');
+                // cerco i parametri prima tra gli attributi di sessione
+                let dates = attr.get('dates');
+                let months = attr.get('months');
 
-            log('GetOvertimeIntent', dates, dialogState);
+                log('GetOvertimeIntent', dates, dialogState);
 
-            try {
                 // e cerco anche tra gli slot di richiesta
                 // se date è un mese lo salvo nell'attributo months
                 if (dates ||
@@ -561,7 +584,7 @@ const GetOvertimeIntent = {
                                 )
                                 .withShouldEndSession(true);
                         }
-                    }                    
+                    }
                 } else if (months ||
                     ((months = (slotValues.date && slotValues.date.resolved))
                         && (months = parseMonthString(months)))) {
@@ -596,12 +619,12 @@ const GetOvertimeIntent = {
                         .addElicitSlotDirective('date')
                         .withShouldEndSession(false);
                 }
-            } catch (err) {
-                log(`Error processing events request: ${err}`);
-                log(JSON.stringify(handlerInput));
-                responseBuilder
-                    .speak('Si è verificato un errore!');
             }
+        } catch (err) {
+            log(`Error processing events request: ${err}`);
+            log(JSON.stringify(handlerInput));
+            responseBuilder
+                .speak('Si è verificato un errore!');
         }
 
         return responseBuilder
@@ -619,36 +642,45 @@ const SendOvertimeIntent = {
         const attr = createSessionHelper(handlerInput);
 
         try {
-            const email = await getUserEmail(handlerInput);
-            if (email) {
-                log(`Sending mail to ${email}`);
-                // TODO: recuperare il contenuto della lista, formattarlo,
-                //  e inviarlo via mail sia nel testo che come allegato CSV
-                //  gli allegati possono essere inviati solo con sendRawEmail
-                //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
-
-                // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
-                //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
-                //  oppure si può provre con il metodo SES VerifyEmailIdentity 
-                //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
-                //  il problema è che il template vuole due url per il redirect
-                //  in caso di autorizzaione o rifiuto
-                //  e a cosa faccio puntare questi url? io non ho un sito web!!!
-
-                // forms google da usare come link di risposta
-                //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
-
-                // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
-                const response = await sendListByMail(skconfig['mail_recipe'], email);
-                // TODO: cosa succede se la mail non è autorizzata?
-                log(`response: ${JSON.stringify(response)}`);
+            const listId = await getListId(handlerInput, attr, LIST_NAME);
+            if (!listId) {
+                log('list id null!');
                 responseBuilder
-                    .speak('Controlla nella tua casella mail.')
-                    .withShouldEndSession(true)
-            } else {
-                responseBuilder
-                    .speak('Non ci sono riuscito!')
+                    .speak('La tua lista straodrinari è vuota.')
                     .withShouldEndSession(true);
+            } else {
+                const userEmail = await getUserEmail(handlerInput);
+                if (userEmail) {
+                    log(`Sending mail to ${userEmail}`);
+                    // TODO: recuperare il contenuto della lista, formattarlo,
+                    //  e inviarlo via mail sia nel testo che come allegato CSV
+                    //  gli allegati possono essere inviati solo con sendRawEmail
+                    //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
+
+                    // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
+                    //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
+                    //  oppure si può provre con il metodo SES VerifyEmailIdentity 
+                    //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
+                    //  il problema è che il template vuole due url per il redirect
+                    //  in caso di autorizzaione o rifiuto
+                    //  e a cosa faccio puntare questi url? io non ho un sito web!!!
+
+                    // forms google da usare come link di risposta
+                    //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
+
+                    // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
+                    const response = await sendListByMail(handlerInput,
+                        skconfig['mail_recipe'], userEmail, listId);
+                    // TODO: cosa succede se la mail non è autorizzata?
+                    log(`response: ${JSON.stringify(response)}`);
+                    responseBuilder
+                        .speak('Controlla nella tua casella mail.')
+                        .withShouldEndSession(true)
+                } else {
+                    responseBuilder
+                        .speak('Non ci sono riuscito!')
+                        .withShouldEndSession(true);
+                }
             }
         } catch (err) {
             log(`Error processing events request: ${err}`);

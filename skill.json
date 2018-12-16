@@ -10,13 +10,23 @@
             "help"
           ],
           "name": "My overtime hours",
-          "description": "** Full Description **"
+          "description": "** Full Description **",
+          "keywords": [
+            "overtime"
+          ],
+          "smallIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_108.png",
+          "largeIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_512.png"
         },
         "it-IT": {
           "summary": "Skill per la gestione delle ore di straordinario",
           "examplePhrases": [],
           "name": "I miei straordinari",
-          "description": "** Descrizione completa **"
+          "description": "** Descrizione completa **",
+          "keywords": [
+            "straordinari"
+          ],
+          "smallIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_108.png",
+          "largeIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_512.png"
         }
       },
       "isAvailableWorldwide": true,
