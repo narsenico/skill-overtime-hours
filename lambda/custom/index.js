@@ -8,16 +8,19 @@
  */
 
 const Alexa = require('ask-sdk-core');
-const AWS = require('aws-sdk');
+// const AWS = require('aws-sdk');
 const moment = require('moment-timezone');
 const skconfig = require('./config.json');
+const mailjet = require('node-mailjet')
+    .connect(skconfig.MJ_APIKEY_PUBLIC, skconfig.MJ_APIKEY_PRIVATE);
 const { createSessionHelper,
     getSlotValues,
     log,
     TARGET_SPEAKER,
     // TARGET_CARD,
     createComposer,
-    createRawMail } = require('./utility.js'),
+    // createRawMail,
+    createMailjetRequest } = require('./utility.js'),
     ospeak = createComposer(TARGET_SPEAKER)
     //, ocard = createComposer(TARGET_CARD)
     ;
@@ -48,7 +51,8 @@ const PERMISSIONS = [
     'write::alexa:household:list',
     'alexa::profile:email:read'];
 
-AWS.config.update({ region: 'eu-west-1' });
+// // variabili globali
+// let gCanSendEmail;
 
 /**
  * Il formato della durata è: PT<ore>H<minuti>M
@@ -299,7 +303,60 @@ async function getOvertimeByMonths(handlerInput, listId, months) {
 async function getUserEmail(handlerInput) {
     const ups = handlerInput.serviceClientFactory.getUpsServiceClient();
     return ups.getProfileEmail();
+    // return 'not_amon-list@yahoo.it';
 }
+
+// async function ensureCustomVerificationEmail(params) {
+//     let template;
+//     try {
+//         log(`getCustomVerificationEmailTemplate: ${params.TemplateName}`);
+//         template = await gSes.getCustomVerificationEmailTemplate({
+//             TemplateName: params.TemplateName
+//         });
+//     } catch (err) {
+//         log('getCustomVerificationEmailTemplate', err);
+//     }
+//     if (template && template.TemplateName === params.TemplateName) {
+//         return true;
+//     } else {
+//         try {
+//             log(`createCustomVerificationEmailTemplate: ${params.TemplateName}`);
+//             template = await gSes.createCustomVerificationEmailTemplate(params);
+//             return !!template;
+//         } catch (err) {
+//             log('createCustomVerificationEmailTemplate', err);
+//             return false;
+//         }
+//     }
+// }
+
+// async function removeUserEmailAuth(address) {
+//     try {
+//         log(`deleteIdentity: ${address}...`);
+//         const response = await gSes.deleteIdentity({
+//             Identity: address
+//         });
+//         log(response);
+//         return !!response;
+//     } catch (err) {
+//         log(err);
+//         return false;
+//     }
+// }
+
+// async function sendEmailVerification(address) {
+//     try {
+//         log(`verifyEmailIdentity ${address}...`);
+//         const response = await gSes.verifyEmailIdentity({
+//             EmailAddress: address
+//         });
+//         log(response);
+//         return !!response;
+//     } catch (err) {
+//         log(err);
+//         return false;
+//     }
+// }
 
 async function sendListByMail(handlerInput, from, to, listId) {
     const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
@@ -337,30 +394,46 @@ async function sendListByMail(handlerInput, from, to, listId) {
             }, 'Questi sono tutti i tuoi straordinari (espressi in minuti):<br><br>');
             const csv = items.reduce((m, item) => {
                 return m += `"${item.date}","${item.duration}"\n`;
-            }, '');
+            }, '"Data","Minuti"\n');
 
-            const raw = await createRawMail({
-                from,
-                to,
-                subject: 'Straordinari',
-                text,
-                html,
-                attachments: [
-                    {
-                        filename: 'straordinari.csv',
-                        type: 'text/csv',
-                        content: csv
-                    }
-                ]
-            });
+            // const raw = await createRawMail({
+            //     from,
+            //     to,
+            //     subject: 'Straordinari',
+            //     text,
+            //     html,
+            //     attachments: [
+            //         {
+            //             filename: 'straordinari.csv',
+            //             type: 'text/csv',
+            //             content: csv
+            //         }
+            //     ]
+            // });
 
-            return new AWS.SES({ apiVersion: '2010-12-01' })
-                .sendRawEmail({
-                    RawMessage: {
-                        Data: raw
-                    }
-                })
-                .promise();
+            // return gSes.sendRawEmail({
+            //     RawMessage: {
+            //         Data: raw
+            //     }
+            // })
+            //     .promise();
+
+            return mailjet
+                .post('send', { version: 'v3.1' })
+                .request(createMailjetRequest({
+                    from,
+                    to,
+                    subject: 'Straordinari',
+                    text,
+                    html,
+                    attachments: [
+                        {
+                            filename: 'straordinari.csv',
+                            type: 'text/csv',
+                            content: csv
+                        }
+                    ]
+                }));
         } else {
             return null;
         }
@@ -501,11 +574,19 @@ const AddOvertimeIntent = {
                         .withShouldEndSession(false);
                 }
             }
-        } catch (err) {
-            log(`Error processing events request: ${err}`);
-            log(JSON.stringify(handlerInput));
-            responseBuilder
-                .speak('Si è verificato un errore!');
+        } catch (error) {
+            log('Error processing events request', error);
+            if (error.statusCode === 403) {
+                return handlerInput.responseBuilder
+                    .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
+                        'Grazie.'))
+                    .withAskForPermissionsConsentCard(PERMISSIONS)
+                    .getResponse();
+            } else {
+                log(JSON.stringify(handlerInput));
+                responseBuilder
+                    .speak('Si è verificato un errore!');
+            }
         }
 
         return responseBuilder
@@ -615,16 +696,24 @@ const GetOvertimeIntent = {
                     }
                 } else {
                     responseBuilder
-                        .speak('Di quando?')
+                        .speak('Per che periodo?')
                         .addElicitSlotDirective('date')
                         .withShouldEndSession(false);
                 }
             }
-        } catch (err) {
-            log(`Error processing events request: ${err}`);
-            log(JSON.stringify(handlerInput));
-            responseBuilder
-                .speak('Si è verificato un errore!');
+        } catch (error) {
+            log('Error processing events request', error);
+            if (error.statusCode === 403) {
+                return handlerInput.responseBuilder
+                    .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
+                        'Grazie.'))
+                    .withAskForPermissionsConsentCard(PERMISSIONS)
+                    .getResponse();
+            } else {
+                log(JSON.stringify(handlerInput));
+                responseBuilder
+                    .speak('Si è verificato un errore!');
+            }
         }
 
         return responseBuilder
@@ -640,7 +729,10 @@ const SendOvertimeIntent = {
     async handle(handlerInput) {
         const responseBuilder = handlerInput.responseBuilder;
         const attr = createSessionHelper(handlerInput);
+        let userEmail;
 
+        // log(`gCanSendEmail: ${gCanSendEmail}`);
+        // if (gCanSendEmail) {
         try {
             const listId = await getListId(handlerInput, attr, LIST_NAME);
             if (!listId) {
@@ -648,50 +740,115 @@ const SendOvertimeIntent = {
                 responseBuilder
                     .speak('La tua lista straodrinari è vuota.')
                     .withShouldEndSession(true);
+            } else if ((userEmail = await getUserEmail(handlerInput))) {
+                log(`Sending mail to ${userEmail}`);
+                // TODO: recuperare il contenuto della lista, formattarlo,
+                //  e inviarlo via mail sia nel testo che come allegato CSV
+                //  gli allegati possono essere inviati solo con sendRawEmail
+                //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
+
+                // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
+                //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
+                //  oppure si può provre con il metodo SES VerifyEmailIdentity 
+                //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
+                //  il problema è che il template vuole due url per il redirect
+                //  in caso di autorizzaione o rifiuto
+                //  e a cosa faccio puntare questi url? io non ho un sito web!!!
+
+                // forms google da usare come link di risposta
+                //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
+
+                // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
+                const response = await sendListByMail(handlerInput,
+                    skconfig['it']['mail_recipe'], userEmail, listId);
+                // TODO: cosa succede se la mail non è autorizzata?
+                log('response', response);
+                responseBuilder
+                    .speak('Controlla nella tua casella mail.')
+                    .withShouldEndSession(true)
             } else {
-                const userEmail = await getUserEmail(handlerInput);
-                if (userEmail) {
-                    log(`Sending mail to ${userEmail}`);
-                    // TODO: recuperare il contenuto della lista, formattarlo,
-                    //  e inviarlo via mail sia nel testo che come allegato CSV
-                    //  gli allegati possono essere inviati solo con sendRawEmail
-                    //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
-
-                    // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
-                    //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
-                    //  oppure si può provre con il metodo SES VerifyEmailIdentity 
-                    //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
-                    //  il problema è che il template vuole due url per il redirect
-                    //  in caso di autorizzaione o rifiuto
-                    //  e a cosa faccio puntare questi url? io non ho un sito web!!!
-
-                    // forms google da usare come link di risposta
-                    //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
-
-                    // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
-                    const response = await sendListByMail(handlerInput,
-                        skconfig['mail_recipe'], userEmail, listId);
-                    // TODO: cosa succede se la mail non è autorizzata?
-                    log(`response: ${JSON.stringify(response)}`);
-                    responseBuilder
-                        .speak('Controlla nella tua casella mail.')
-                        .withShouldEndSession(true)
-                } else {
-                    responseBuilder
-                        .speak('Non ci sono riuscito!')
-                        .withShouldEndSession(true);
-                }
+                responseBuilder
+                    .speak('Non ci sono riuscito!')
+                    .withShouldEndSession(true);
             }
-        } catch (err) {
-            log(`Error processing events request: ${err}`);
-            log(JSON.stringify(handlerInput));
-            responseBuilder
-                .speak('Si è verificato un errore!');
+        } catch (error) {
+            log('Error processing events request => ', error);
+            // if (userEmail && 
+            //     err.statusCode === 400 && 
+            //     err.code == 'MessageRejected') {
+            //     try {
+            //         if (await sendEmailVerification(userEmail)) {
+            //             responseBuilder
+            //                 .speak('Email di verifica inviata.');
+            //         } else {
+            //             responseBuilder
+            //                 .speak('Si è verificato un errore!');
+            //         }
+            //     } catch (err) {
+            //         log(err);
+            //     }
+            // } else {
+            // log(JSON.stringify(handlerInput));
+            // responseBuilder
+            //     .speak('Si è verificato un errore!');
+            // // }
+            // TODO: differenziare tra errore lista e invio mail
+            if (error.statusCode === 403) {
+                return handlerInput.responseBuilder
+                    .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
+                        'Grazie.'))
+                    .withAskForPermissionsConsentCard(PERMISSIONS)
+                    .getResponse();
+            } else {
+                log(JSON.stringify(handlerInput));
+                responseBuilder
+                    .speak('Si è verificato un errore!');
+            }            
         }
+        // } else {
+        //     responseBuilder
+        //         .speak('Purtroppo non è possibile inviare email!');
+        // }
         return responseBuilder
             .getResponse();
     }
 };
+
+// const RemoveEmailAddressIntent = {
+//     canHandle(handlerInput) {
+//         return handlerInput.requestEnvelope.request.type === 'IntentRequest'
+//             && handlerInput.requestEnvelope.request.intent.name === 'RemoveEmailAddressIntent';
+//     },
+//     async handle(handlerInput) {
+//         const responseBuilder = handlerInput.responseBuilder;
+//         try {
+//             const userEmail = await getUserEmail(handlerInput);
+//             if (userEmail) {
+//                 // TODO: prima chiedere conferma
+//                 if (await removeUserEmailAuth(userEmail)) {
+//                     // TOOO: spiegare cosa è stato fatto anche via mail
+//                     responseBuilder
+//                         .speak('Fatto!')
+//                         .withShouldEndSession(true);
+//                 } else {
+//                     responseBuilder
+//                         .speak('Purtroppo non è stato possibile completare l\'operazione!')
+//                         .withShouldEndSession(true);
+//                 }
+//             } else {
+//                 responseBuilder
+//                     .speak('Non sono riuscito a recuperare il tuo indirizzo email.')
+//                     .withShouldEndSession(true);
+//             }
+//         } catch (err) {
+//             log('Error processing events request', err);
+//             responseBuilder
+//                 .speak('Si è verificato un errore!');
+//         }
+//         return handlerInput.responseBuilder
+//             .getResponse();
+//     },
+// };
 
 const HelpIntentHandler = {
     canHandle(handlerInput) {
@@ -699,10 +856,10 @@ const HelpIntentHandler = {
             && handlerInput.requestEnvelope.request.intent.name === 'AMAZON.HelpIntent';
     },
     handle(handlerInput) {
-        const speechText = 'Questo è un aiuto';
-
         return handlerInput.responseBuilder
-            .speak(speechText)
+            .speak(ospeak.phrase('I comandi che puoi usare sono:',
+                'aggiungi, elenca e invia'))
+            .withShouldEndSession(false)
             .getResponse();
     },
 };
@@ -757,14 +914,30 @@ const ErrorHandler = {
     },
 };
 
-const skillBuilder = Alexa.SkillBuilders.custom();
+// // operazioni preliminari
+// (async () => {
+//     // TODO: per la versione "internazionale" come faccio? la regione di AWS sarà diversa
+//     //  e anche la lingua delle skconfig
+//     //  devo eseguire queste operazioni in ogni intent?
+//     log('*** init skill ***');
+//     // AWS.config.update({ region: 'eu-west-1' });
+//     // gSes = new AWS.SES({ apiVersion: '2010-12-01' });
+//     // // mi assicuro che sia stato caricato il corretto template per la mail di verifica
+//     // gCanSendEmail = await ensureCustomVerificationEmail(skconfig['it']['verification_email_template']);
 
-exports.handler = skillBuilder
+//     // provo con mailjet
+//     log('mailjet', mailjet);
+//     gCanSendEmail = true;
+// })();
+
+exports.handler = Alexa.SkillBuilders
+    .custom()
     .addRequestHandlers(
         LaunchRequestHandler,
         AddOvertimeIntent,
         GetOvertimeIntent,
         SendOvertimeIntent,
+        // RemoveEmailAddressIntent,
         HelpIntentHandler,
         CancelAndStopIntentHandler,
         SessionEndedRequestHandler

@@ -2,26 +2,13 @@
   "manifest": {
     "publishingInformation": {
       "locales": {
-        "en-US": {
-          "summary": "Skill for tracking overtime hours",
-          "examplePhrases": [
-            "Alexa open hello world",
-            "hello",
-            "help"
-          ],
-          "name": "My overtime hours",
-          "description": "** Full Description **",
-          "keywords": [
-            "overtime"
-          ],
-          "smallIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_108.png",
-          "largeIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_512.png"
-        },
         "it-IT": {
           "summary": "Skill per la gestione delle ore di straordinario",
-          "examplePhrases": [],
+          "examplePhrases": [
+            "Alexa, apri i miei straordinari"
+          ],
           "name": "I miei straordinari",
-          "description": "** Descrizione completa **",
+          "description": "** TOOD: Descrizione completa **",
           "keywords": [
             "straordinari"
           ],
@@ -29,10 +16,12 @@
           "largeIconUri": "https://s3-eu-west-1.amazonaws.com/amonshore-icons/overtimehours_512.png"
         }
       },
-      "isAvailableWorldwide": true,
+      "isAvailableWorldwide": false,
       "testingInstructions": "Sample Testing Instructions.",
       "category": "KNOWLEDGE_AND_TRIVIA",
-      "distributionCountries": []
+      "distributionCountries": [
+        "IT"
+      ]
     },
     "apis": {
       "custom": {
@@ -64,10 +53,15 @@
     "manifestVersion": "1.0",
     "privacyAndCompliance": {
       "allowsPurchases": false,
+      "locales": {
+        "it-IT": {
+          "privacyPolicyUrl": "https://www.freeprivacypolicy.com/privacy/view/1e96e35aa0ec91bec668d9ff9aff0c26"
+        }
+      },
       "isExportCompliant": true,
       "containsAds": false,
       "isChildDirected": false,
-      "usesPersonalInfo": true
+      "usesPersonalInfo": false
     }
   }
 }

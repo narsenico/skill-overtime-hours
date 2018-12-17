@@ -1,7 +1,7 @@
 {
     "interactionModel": {
         "languageModel": {
-            "invocationName": "miei straordinari",
+            "invocationName": "i miei straordinari",
             "intents": [
                 {
                     "name": "AMAZON.CancelIntent",
@@ -80,6 +80,16 @@
                         "inviarmi la lista",
                         "mandami la lista",
                         "mandarmi la lista"
+                    ]
+                },
+                {
+                    "name": "RemoveEmailAddressIntent",
+                    "slots": [ ],
+                    "samples": [
+                        "rimuovi indizzo email",
+                        "rimuovi il mio indizzo email",
+                        "rimuovere indizzo email",
+                        "rimuovere il mio indizzo email"
                     ]
                 },
                 {
