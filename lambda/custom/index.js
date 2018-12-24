@@ -8,7 +8,6 @@
  */
 
 const Alexa = require('ask-sdk-core');
-// const AWS = require('aws-sdk');
 const moment = require('moment-timezone');
 const skconfig = require('./config.json');
 const mailjet = require('node-mailjet')
@@ -19,7 +18,6 @@ const { createSessionHelper,
     TARGET_SPEAKER,
     // TARGET_CARD,
     createComposer,
-    // createRawMail,
     createMailjetRequest } = require('./utility.js'),
     ospeak = createComposer(TARGET_SPEAKER)
     //, ocard = createComposer(TARGET_CARD)
@@ -30,7 +28,6 @@ const DATE_FORMAT = 'YYYY-MM-DD',
     DATE_LONG_FORMAT = 'dddd, D MMMM',
     DATE_MEDIUM_FORMAT = 'ddd, DD MMM',
     MONTH_LONG_FORMAT = 'MMMM',
-    DAY_OF_WEEK = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
     MONTHS_DIGIT = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
     // fuso orario italia
     // TODO: recuperare la timezone 
@@ -50,9 +47,6 @@ const PERMISSIONS = [
     'read::alexa:household:list',
     'write::alexa:household:list',
     'alexa::profile:email:read'];
-
-// // variabili globali
-// let gCanSendEmail;
 
 /**
  * Il formato della durata è: PT<ore>H<minuti>M
@@ -93,7 +87,6 @@ function parseMonthString(sdate) {
  * - YYYY-MM-DD
  * - YYYY-W<numero settimana>
  * - YYYY-W<numero settimana>-WE (weekend)
- * - giorni della settimana
  * 
  * La settimana parte da lunedì.
  * 
@@ -101,10 +94,7 @@ function parseMonthString(sdate) {
  * @returns {Array<String>} un array di date nel formato YYYY-MM-DD oppure null se il formato non è valido 
  */
 function parseDateString(sdate) {
-    const dayOfWeek = DAY_OF_WEEK.indexOf(sdate);
-    if (dayOfWeek >= 0) {
-        return [nextDay(dayOfWeek).format(DATE_FORMAT)];
-    } else if (/^\d{4}-W\d{1,2}-WE$/.test(sdate)) {
+    if (/^\d{4}-W\d{1,2}-WE$/.test(sdate)) {
         // il formato YYYY-Www ritorna un lunedì
         const date = moment(sdate.substr(0, 8));
         // ritorno il sabato e la domenica
@@ -124,28 +114,26 @@ function parseDateString(sdate) {
     }
 }
 
-/**
- * Ritorna mdate se il giorno della settimana corrisponde con dayOfWeek,
- * oppure il prossimo giorno con quel dayOfWeek.
- * 
- * @param {Moment} mdate istanza di moment da cui partire
- * @param {Number} dayOfWeek indice del giorno della settimana (domencia = 0)
- * @returns mdate (aggiornata)
- */
-function nextDay(dayOfWeek) {
-    const today = moment();
-    const curDayOfWeek = today.day();
-    if (curDayOfWeek === dayOfWeek) {
-        if (today.tz(TIMEZONE).hour() > TRASH_COLLECTION_HOUR) {
-            return today.add(7, 'days');
+function ensurePastMonths(months, refMonth) {
+    return months.map(month => {
+        if (month <= refMonth) {
+            return month;
         } else {
-            return today;
+            const [, y, r] = /(\d{4})(-\d{2})/.exec(month);
+            return (+y - 1) + r;
         }
-    } else if (curDayOfWeek < dayOfWeek) {
-        return today.add(dayOfWeek - curDayOfWeek, 'days');
-    } else {
-        return today.add(7 - curDayOfWeek + dayOfWeek, 'days');
-    }
+    });
+}
+
+function ensurePastDates(dates, refDate) {
+    return dates.map(date => {
+        if (date <= refDate) {
+            return date;
+        } else {
+            const [, y, r] = /(\d{4})(-\d{2}-\d{2})/.exec(date);
+            return (+y - 1) + r;
+        }
+    });
 }
 
 /**
@@ -303,60 +291,7 @@ async function getOvertimeByMonths(handlerInput, listId, months) {
 async function getUserEmail(handlerInput) {
     const ups = handlerInput.serviceClientFactory.getUpsServiceClient();
     return ups.getProfileEmail();
-    // return 'not_amon-list@yahoo.it';
 }
-
-// async function ensureCustomVerificationEmail(params) {
-//     let template;
-//     try {
-//         log(`getCustomVerificationEmailTemplate: ${params.TemplateName}`);
-//         template = await gSes.getCustomVerificationEmailTemplate({
-//             TemplateName: params.TemplateName
-//         });
-//     } catch (err) {
-//         log('getCustomVerificationEmailTemplate', err);
-//     }
-//     if (template && template.TemplateName === params.TemplateName) {
-//         return true;
-//     } else {
-//         try {
-//             log(`createCustomVerificationEmailTemplate: ${params.TemplateName}`);
-//             template = await gSes.createCustomVerificationEmailTemplate(params);
-//             return !!template;
-//         } catch (err) {
-//             log('createCustomVerificationEmailTemplate', err);
-//             return false;
-//         }
-//     }
-// }
-
-// async function removeUserEmailAuth(address) {
-//     try {
-//         log(`deleteIdentity: ${address}...`);
-//         const response = await gSes.deleteIdentity({
-//             Identity: address
-//         });
-//         log(response);
-//         return !!response;
-//     } catch (err) {
-//         log(err);
-//         return false;
-//     }
-// }
-
-// async function sendEmailVerification(address) {
-//     try {
-//         log(`verifyEmailIdentity ${address}...`);
-//         const response = await gSes.verifyEmailIdentity({
-//             EmailAddress: address
-//         });
-//         log(response);
-//         return !!response;
-//     } catch (err) {
-//         log(err);
-//         return false;
-//     }
-// }
 
 async function sendListByMail(handlerInput, from, to, listId) {
     const listClient = handlerInput.serviceClientFactory.getListManagementServiceClient();
@@ -396,28 +331,6 @@ async function sendListByMail(handlerInput, from, to, listId) {
                 return m += `"${item.date}","${item.duration}"\n`;
             }, '"Data","Minuti"\n');
 
-            // const raw = await createRawMail({
-            //     from,
-            //     to,
-            //     subject: 'Straordinari',
-            //     text,
-            //     html,
-            //     attachments: [
-            //         {
-            //             filename: 'straordinari.csv',
-            //             type: 'text/csv',
-            //             content: csv
-            //         }
-            //     ]
-            // });
-
-            // return gSes.sendRawEmail({
-            //     RawMessage: {
-            //         Data: raw
-            //     }
-            // })
-            //     .promise();
-
             return mailjet
                 .post('send', { version: 'v3.1' })
                 .request(createMailjetRequest({
@@ -440,15 +353,69 @@ async function sendListByMail(handlerInput, from, to, listId) {
     }
 }
 
+async function sendProgressive(handlerInput, speech) {
+    const requestEnvelope = handlerInput.requestEnvelope;
+    const directiveServiceClient = handlerInput.serviceClientFactory.getDirectiveServiceClient();
+
+    const requestId = requestEnvelope.request.requestId;
+    const directive = {
+        header: {
+            requestId,
+        },
+        directive: {
+            type: 'VoicePlayer.Speak',
+            speech,
+        },
+    };
+
+    return directiveServiceClient.enqueue(directive);
+}
+
 const LaunchRequestHandler = {
     canHandle(handlerInput) {
         return handlerInput.requestEnvelope.request.type === 'LaunchRequest';
     },
-    handle(handlerInput) {
-        return handlerInput.responseBuilder
-            .speak(ospeak.phrase('Benvenuto, con questa skill puoi gestire i tuoi straordinari.',
-                'Cosa vuoi fare?'))
-            .reprompt('Per scoprire tutte le funzionalità di questa skill, prova a chiedere aiuto!')
+    async handle(handlerInput) {
+        const responseBuilder = handlerInput.responseBuilder;
+        const attr = createSessionHelper(handlerInput);
+
+        try {
+            await sendProgressive(handlerInput, 
+                // alzo il volume di un poco, perché con il progressivo è più basso del normale
+                ospeak.prosody('Benvenuto, con questa skill puoi gestire i tuoi straordinari.', {
+                    volume: '+10dB'
+                }));
+            // recupero subito l'id della lista
+            let listId = await getListId(handlerInput, attr, LIST_NAME);
+            // se non la trovo provo a crearla
+            if (!listId) {
+                listId = await createList(handlerInput, attr, LIST_NAME);
+            }
+            if (!listId) {
+                log('list id null!');
+                responseBuilder
+                    .speak(ospeak.phrase('Non sono riuscito a recuperare la lista.'));
+            } else {
+                responseBuilder
+                    .speak(ospeak.phrase('Cosa vuoi fare?'))
+                    .reprompt('Per scoprire tutte le funzionalità di questa skill, prova a chiedere aiuto!');
+            }
+        } catch (error) {
+            log('Error processing events request', error);
+            if (error.statusCode === 403) {
+                return handlerInput.responseBuilder
+                    .speak(ospeak.phrase('Prima di procedere, ti prego di concedere tutti permessi necessari a questa skill, dall\'app Amazon Alexa.',
+                        'Grazie.'))
+                    .withAskForPermissionsConsentCard(PERMISSIONS)
+                    .getResponse();
+            } else {
+                log(JSON.stringify(handlerInput));
+                responseBuilder
+                    .speak('Si è verificato un errore!');
+            }
+        }
+
+        return responseBuilder
             .getResponse();
     },
 };
@@ -487,6 +454,7 @@ const AddOvertimeIntent = {
                 const slotValues = getSlotValues(filledSlots);
                 const dialogState = handlerInput.requestEnvelope.request.dialogState;
                 const confirmationStatus = handlerInput.requestEnvelope.request.intent.confirmationStatus;
+                const refDate = moment().add(1, 'days').tz(TIMEZONE).format(DATE_FORMAT);
 
                 // data -> date YYYY-MM-DD
                 // domani -> date YYYY-MM-DD
@@ -524,6 +492,7 @@ const AddOvertimeIntent = {
                     if (dates ||
                         ((dates = (slotValues.date && slotValues.date.resolved))
                             && (dates = parseDateString(dates)))) {
+                        dates = ensurePastDates(dates, refDate);
                         attr.set('dates', dates);
                         switch (confirmationStatus) {
                             case CONFIRM_CONFIRMED:
@@ -616,6 +585,8 @@ const GetOvertimeIntent = {
                 const filledSlots = handlerInput.requestEnvelope.request.intent.slots;
                 const slotValues = getSlotValues(filledSlots);
                 const dialogState = handlerInput.requestEnvelope.request.dialogState;
+                const refDate = moment().add(1, 'days').tz(TIMEZONE).format(DATE_FORMAT);
+                const refMonth = moment().tz(TIMEZONE).format(MONTH_FORMAT);
 
                 // data -> date YYYY-MM-DD
                 // domani -> date YYYY-MM-DD
@@ -641,6 +612,7 @@ const GetOvertimeIntent = {
                 if (dates ||
                     ((dates = (slotValues.date && slotValues.date.resolved))
                         && (dates = parseDateString(dates)))) {
+                    dates = ensurePastDates(dates, refDate);
                     attr.set('dates', dates);
                     // recupero elenco straordinari per i giorni indicati
                     const data = await getOvertimeByDays(handlerInput, listId, dates);
@@ -669,6 +641,7 @@ const GetOvertimeIntent = {
                 } else if (months ||
                     ((months = (slotValues.date && slotValues.date.resolved))
                         && (months = parseMonthString(months)))) {
+                    months = ensurePastMonths(months, refMonth);
                     attr.set('months', months);
                     // recupero elenco straordinari per i mesi indicati
                     const data = await getOvertimeByMonths(handlerInput, listId, months);
@@ -731,10 +704,10 @@ const SendOvertimeIntent = {
         const attr = createSessionHelper(handlerInput);
         let userEmail;
 
-        // log(`gCanSendEmail: ${gCanSendEmail}`);
-        // if (gCanSendEmail) {
         try {
+            console.time('getListId');
             const listId = await getListId(handlerInput, attr, LIST_NAME);
+            console.timeEnd('getListId');
             if (!listId) {
                 log('list id null!');
                 responseBuilder
@@ -742,26 +715,8 @@ const SendOvertimeIntent = {
                     .withShouldEndSession(true);
             } else if ((userEmail = await getUserEmail(handlerInput))) {
                 log(`Sending mail to ${userEmail}`);
-                // TODO: recuperare il contenuto della lista, formattarlo,
-                //  e inviarlo via mail sia nel testo che come allegato CSV
-                //  gli allegati possono essere inviati solo con sendRawEmail
-                //  vedi https://stackoverflow.com/questions/49364199/how-can-send-pdf-attachment-in-node-aws-sdk-sendrawemail-function
-
-                // TODO: è possibile inviare mail solo a indirizzi autorizzati e verificati
-                //  per estendere a mail non autorizzate il servizio https://console.aws.amazon.com/support/v1?region=us-east-1#/case/create?issueType=service-limit-increase&limitType=service-code-ses                
-                //  oppure si può provre con il metodo SES VerifyEmailIdentity 
-                //  che dovrebbe inviare una mail di notifica/verifica ad un indirizzo
-                //  il problema è che il template vuole due url per il redirect
-                //  in caso di autorizzaione o rifiuto
-                //  e a cosa faccio puntare questi url? io non ho un sito web!!!
-
-                // forms google da usare come link di risposta
-                //   https://docs.google.com/forms/d/e/1FAIpQLSew5jKQH8LVRXAtroe1-YGnO-qHS0UT3k9rukbV_XtElNWvsQ/viewform?usp=sf_link
-
-                // NB: yahoo non permette l'invio di mail tramite SES, gmail sembra funzionare
                 const response = await sendListByMail(handlerInput,
                     skconfig['it']['mail_recipe'], userEmail, listId);
-                // TODO: cosa succede se la mail non è autorizzata?
                 log('response', response);
                 responseBuilder
                     .speak('Controlla nella tua casella mail.')
@@ -773,25 +728,6 @@ const SendOvertimeIntent = {
             }
         } catch (error) {
             log('Error processing events request => ', error);
-            // if (userEmail && 
-            //     err.statusCode === 400 && 
-            //     err.code == 'MessageRejected') {
-            //     try {
-            //         if (await sendEmailVerification(userEmail)) {
-            //             responseBuilder
-            //                 .speak('Email di verifica inviata.');
-            //         } else {
-            //             responseBuilder
-            //                 .speak('Si è verificato un errore!');
-            //         }
-            //     } catch (err) {
-            //         log(err);
-            //     }
-            // } else {
-            // log(JSON.stringify(handlerInput));
-            // responseBuilder
-            //     .speak('Si è verificato un errore!');
-            // // }
             // TODO: differenziare tra errore lista e invio mail
             if (error.statusCode === 403) {
                 return handlerInput.responseBuilder
@@ -803,52 +739,13 @@ const SendOvertimeIntent = {
                 log(JSON.stringify(handlerInput));
                 responseBuilder
                     .speak('Si è verificato un errore!');
-            }            
+            }
         }
-        // } else {
-        //     responseBuilder
-        //         .speak('Purtroppo non è possibile inviare email!');
-        // }
+
         return responseBuilder
             .getResponse();
     }
 };
-
-// const RemoveEmailAddressIntent = {
-//     canHandle(handlerInput) {
-//         return handlerInput.requestEnvelope.request.type === 'IntentRequest'
-//             && handlerInput.requestEnvelope.request.intent.name === 'RemoveEmailAddressIntent';
-//     },
-//     async handle(handlerInput) {
-//         const responseBuilder = handlerInput.responseBuilder;
-//         try {
-//             const userEmail = await getUserEmail(handlerInput);
-//             if (userEmail) {
-//                 // TODO: prima chiedere conferma
-//                 if (await removeUserEmailAuth(userEmail)) {
-//                     // TOOO: spiegare cosa è stato fatto anche via mail
-//                     responseBuilder
-//                         .speak('Fatto!')
-//                         .withShouldEndSession(true);
-//                 } else {
-//                     responseBuilder
-//                         .speak('Purtroppo non è stato possibile completare l\'operazione!')
-//                         .withShouldEndSession(true);
-//                 }
-//             } else {
-//                 responseBuilder
-//                     .speak('Non sono riuscito a recuperare il tuo indirizzo email.')
-//                     .withShouldEndSession(true);
-//             }
-//         } catch (err) {
-//             log('Error processing events request', err);
-//             responseBuilder
-//                 .speak('Si è verificato un errore!');
-//         }
-//         return handlerInput.responseBuilder
-//             .getResponse();
-//     },
-// };
 
 const HelpIntentHandler = {
     canHandle(handlerInput) {
@@ -914,22 +811,6 @@ const ErrorHandler = {
     },
 };
 
-// // operazioni preliminari
-// (async () => {
-//     // TODO: per la versione "internazionale" come faccio? la regione di AWS sarà diversa
-//     //  e anche la lingua delle skconfig
-//     //  devo eseguire queste operazioni in ogni intent?
-//     log('*** init skill ***');
-//     // AWS.config.update({ region: 'eu-west-1' });
-//     // gSes = new AWS.SES({ apiVersion: '2010-12-01' });
-//     // // mi assicuro che sia stato caricato il corretto template per la mail di verifica
-//     // gCanSendEmail = await ensureCustomVerificationEmail(skconfig['it']['verification_email_template']);
-
-//     // provo con mailjet
-//     log('mailjet', mailjet);
-//     gCanSendEmail = true;
-// })();
-
 exports.handler = Alexa.SkillBuilders
     .custom()
     .addRequestHandlers(
@@ -937,7 +818,6 @@ exports.handler = Alexa.SkillBuilders
         AddOvertimeIntent,
         GetOvertimeIntent,
         SendOvertimeIntent,
-        // RemoveEmailAddressIntent,
         HelpIntentHandler,
         CancelAndStopIntentHandler,
         SessionEndedRequestHandler

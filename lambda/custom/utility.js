@@ -1,9 +1,6 @@
 /* eslint-disable  func-names */
 /* eslint-disable  no-console */
 
-// const { Readable } = require('stream'),
-//     emailStream = require('email-stream');
-
 const CAN_LOG = !process.env.NO_DEBUG;
 
 /**
@@ -202,55 +199,6 @@ function createComposer(target) {
     return COMPOSER[target];
 }
 
-// /**
-//  * Compone il tracciato di una email nel formato RFC 5322.
-//  * Per gli allegati passare un arrya di oggetti con le seguenti proprietà:
-//  * filename:String, type:String MIME type, body:String
-//  * 
-//  * @param {Object} options  parametri di configurazione della mail 
-//  * @returns {Promise} se risolta un Buffer con il tracciato della mail, altrimenti l'errore
-//  */
-// async function createRawMail({ from, to, subject, text, html, attachments = [], encoding = 'utf8' }) {
-//     return new Promise((resolve, reject) => {
-//         const textStream = new Readable();
-//         textStream.push(text);
-//         textStream.push(null);
-
-//         const htmlStream = new Readable();
-//         htmlStream.push(html);
-//         htmlStream.push(null);
-
-//         const hasAttachments = attachments != null && attachments.length > 0;
-
-//         const email = emailStream({
-//             to,
-//             from,
-//             subject,
-//             text: textStream,
-//             html: htmlStream,
-//             attachments: hasAttachments
-//         });
-//         if (hasAttachments) {
-//             attachments.forEach(att => {
-//                 const attachStream = new Readable();
-//                 attachStream.push(att.content);
-//                 attachStream.push(null);
-
-//                 email.attach({
-//                     filename: att.filename,
-//                     type: att.type,
-//                     body: attachStream
-//                 });
-//             });
-//         }
-
-//         const chunks = [];
-//         email.on('data', chunk => chunks.push(chunk))
-//             .on('end', () => resolve(Buffer.concat(chunks)))
-//             .on('error', err => reject(err));
-//     });
-// }
-
 function createMailjetRequest({ from, to, subject, text, html, attachments = [] }) {
     const request = {
         "Messages": [
@@ -288,6 +236,5 @@ module.exports = {
     TARGET_SPEAKER,
     TARGET_CARD,
     createComposer,
-    // createRawMail,
     createMailjetRequest
 }
